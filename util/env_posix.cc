@@ -45,57 +45,8 @@ inline uint64_t get_current_tid() {
 }
 
 #ifdef JL_LIBCFS
-
 extern thread_local int threadFsTid;
 int g_num_workers = 0;
-
-#define FS_SHM_KEY_BASE 20190301
-#define FS_MAX_NUM_WORKER 20
-
-static const char* FSP_ENV_VAR_KEY_LIST = "FSP_KEY_LISTS";
-static const char* g_fsp_num_workers_str = nullptr;
-static key_t g_shm_keys[FS_MAX_NUM_WORKER];
-
-static void clean_exit() { exit(fs_exit()); };
-
-static void init_shm_keys(char* keys) {
-  char* token = strtok(keys, ",");
-  g_appid = atoi(token);
-  key_t cur_key;
-  int num_workers = 0;
-  while (token != NULL) {
-    cur_key = atoi(token);
-    fprintf(stdout, "cur_key:%d\n", cur_key);
-    g_shm_keys[num_workers++] = (FS_SHM_KEY_BASE) + cur_key;
-    token = strtok(NULL, ",");
-  }
-  g_num_workers = num_workers;
-}
-
-static void init_fsp_access() {
-  assert(g_fsp_num_workers_str == nullptr);
-  g_fsp_num_workers_str = getenv(FSP_ENV_VAR_KEY_LIST);
-  if (g_fsp_num_workers_str == nullptr) {
-    fprintf(stderr, "ERROR env_key_str not set. set to 1 by default\n");
-    g_fsp_num_workers_str = "1";
-  }
-  char* workers_str = strdup(g_fsp_num_workers_str);
-  init_shm_keys(workers_str);
-  int rt = fs_init_multi(g_num_workers, g_shm_keys);
-  if (rt < 0) {
-    fprintf(stderr, "cannot connect to FSP\n");
-    exit(1);
-  }
-  free(workers_str);
-  fs_init_thread_local_mem();
-  if (g_appid == 1) {
-    fs_start_dump_load_stats();
-  }
-  // int target = g_appid - 1;
-  // fs_admin_thread_reassign(0, target % g_num_workers, FS_REASSIGN_FUTURE);
-  fprintf(stderr, "init_fsp_access() DONE\n");
-}
-
 #endif
 
 static int kSaveFd = -1;
@@ -1589,7 +1540,6 @@ void PosixEnv::BackgroundThreadMain() {
   // int target = g_appid - 1;
   // fs_admin_thread_reassign(0, target % g_num_workers, FS_REASSIGN_FUTURE);
 #endif
-  pin_to_cpu_core(21 + g_appid * 2 - 1);
   while (true) {
     background_work_mutex_.Lock();
 
@@ -1633,11 +1583,6 @@ class SingletonEnv {
                   "env_storage_ will not fit the Env");
     static_assert(alignof(decltype(env_storage_)) >= alignof(EnvType),
                   "env_storage_ does not meet the Env's alignment needs");
-#ifdef JL_LIBCFS
-    init_fsp_access();
-#endif
-    g_appid = atoi(strtok(getenv("FSP_KEY_LISTS"), ","));
-    pin_to_cpu_core(21 + g_appid * 2 - 2);
     new (&env_storage_) EnvType();
   }
   ~SingletonEnv() = default;

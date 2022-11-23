@@ -47,15 +47,6 @@
 #endif  // defined(DeleteFile)
 #endif  // defined(_WIN32)
 
-inline int pin_to_cpu_core(int core_id) {
-  if (core_id < 1) return -1;
-  cpu_set_t cpuset;
-  CPU_ZERO(&cpuset);
-  CPU_SET(core_id - 1, &cpuset);
-  int s = pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
-  return s;
-}
-
 namespace leveldb {
 
 class FileLock;
