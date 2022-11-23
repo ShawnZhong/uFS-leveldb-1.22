@@ -22,6 +22,10 @@
 #include "leveldb/export.h"
 #include "leveldb/status.h"
 
+#if defined(JL_LIBCFS)
+#include "fsapi.h"
+#endif
+
 #if defined(_WIN32)
 // The leveldb::Env class below contains a DeleteFile method.
 // At the same time, <windows.h>, a fairly popular header
@@ -42,6 +46,15 @@
 #define LEVELDB_DELETEFILE_UNDEFINED
 #endif  // defined(DeleteFile)
 #endif  // defined(_WIN32)
+
+inline int pin_to_cpu_core(int core_id) {
+  if (core_id < 1) return -1;
+  cpu_set_t cpuset;
+  CPU_ZERO(&cpuset);
+  CPU_SET(core_id - 1, &cpuset);
+  int s = pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
+  return s;
+}
 
 namespace leveldb {
 
@@ -89,6 +102,9 @@ class LEVELDB_EXPORT Env {
   virtual Status NewRandomAccessFile(const std::string& fname,
                                      RandomAccessFile** result) = 0;
 
+  virtual Status NewFSPRandomAccessFile(const std::string& fname,
+                                     RandomAccessFile** result) {return Status::IOError("env base");};
+
   // Create an object that writes to a new file with the specified
   // name.  Deletes any existing file with the same name and creates a
   // new file.  On success, stores a pointer to the new file in
@@ -98,6 +114,9 @@ class LEVELDB_EXPORT Env {
   // The returned file will only be accessed by one thread at a time.
   virtual Status NewWritableFile(const std::string& fname,
                                  WritableFile** result) = 0;
+
+  virtual Status NewFSPWritableFile(const std::string& fname,
+                                 WritableFile** result) {return Status::IOError("env base");;};
 
   // Create an object that either appends to an existing file, or
   // writes to a new file (if the file does not exist to begin with).
@@ -113,6 +132,9 @@ class LEVELDB_EXPORT Env {
   // an Env that does not support appending.
   virtual Status NewAppendableFile(const std::string& fname,
                                    WritableFile** result);
+  
+  virtual Status NewFSPAppendableFile(const std::string& fname,
+                                   WritableFile** result) {return Status::IOError("env base");;};
 
   // Returns true iff the named file exists.
   virtual bool FileExists(const std::string& fname) = 0;

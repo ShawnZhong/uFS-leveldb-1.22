@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file. See the AUTHORS file for names of contributors.
 
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/types.h>
@@ -67,6 +68,8 @@ static int FLAGS_reads = -1;
 // Number of concurrent threads to run.
 static int FLAGS_threads = 1;
 
+static bool FLAGS_assign = false;
+
 // Size of each value
 static int FLAGS_value_size = 100;
 
@@ -111,9 +114,13 @@ static bool FLAGS_reuse_logs = false;
 // Use the db with the following name.
 static const char* FLAGS_db = nullptr;
 
+extern int g_num_workers;
+extern thread_local int threadFsTid;
+
 namespace leveldb {
 
 namespace {
+
 leveldb::Env* g_env = nullptr;
 
 // Helper for quickly generating random data.
@@ -129,11 +136,13 @@ class RandomGenerator {
     // large enough to serve all typical value sizes we want to write.
     Random rnd(301);
     std::string piece;
+    std::string aStr("a");
     while (data_.size() < 1048576) {
       // Add a short fragment that is as compressible as specified
       // by FLAGS_compression_ratio.
       test::CompressibleString(&rnd, FLAGS_compression_ratio, 100, &piece);
       data_.append(piece);
+      // data_.append(aStr);
     }
     pos_ = 0;
   }
@@ -257,10 +266,14 @@ class Stats {
     if (done_ < 1) done_ = 1;
 
     std::string extra;
+    double elapsed = (finish_ - start_) * 1e-6;
+    double op_per_sec = 0;
+    if (elapsed > 0) {
+      op_per_sec = done_ / (elapsed);
+    }
     if (bytes_ > 0) {
       // Rate is computed on actual elapsed time, not the sum of per-thread
       // elapsed times.
-      double elapsed = (finish_ - start_) * 1e-6;
       char rate[100];
       snprintf(rate, sizeof(rate), "%6.1f MB/s",
                (bytes_ / 1048576.0) / elapsed);
@@ -268,8 +281,10 @@ class Stats {
     }
     AppendWithSpace(&extra, message_);
 
-    fprintf(stdout, "%-12s : %11.3f micros/op;%s%s\n", name.ToString().c_str(),
-            seconds_ * 1e6 / done_, (extra.empty() ? "" : " "), extra.c_str());
+    fprintf(stdout, "%-12s : %11.3f micros/op;%s%s %11.3f ops/sec\n",
+            name.ToString().c_str(), seconds_ * 1e6 / done_,
+            (extra.empty() ? "" : " "), extra.c_str(), op_per_sec);
+    // fprintf(stdout, "done:%d seconds_:%f\n", done_, seconds_);
     if (FLAGS_histogram) {
       fprintf(stdout, "Microseconds per op:\n%s\n", hist_.ToString().c_str());
     }
@@ -417,17 +432,24 @@ class Benchmark {
     if (!FLAGS_use_existing_db) {
       DestroyDB(FLAGS_db, Options());
     }
+    fprintf(stdout, "====== Benchmark() DONE\n");
   }
 
   ~Benchmark() {
+    fprintf(stderr, "~Benchmark\n");
     delete db_;
+    // db_->PartialDelete();
+    // fprintf(stderr, "delete db_ DONE\n");
     delete cache_;
+    fprintf(stderr, "delete cache_ Done\n");
     delete filter_policy_;
+    fprintf(stderr, "delete filter_policy DONE\n");
   }
 
   void Run() {
     PrintHeader();
     Open();
+    fprintf(stdout, "Run() after Open()\n");
 
     const char* benchmarks = FLAGS_benchmarks;
     while (benchmarks != nullptr) {
@@ -522,6 +544,7 @@ class Benchmark {
       }
 
       if (fresh_db) {
+        fprintf(stdout, "======= fresh_db is true\n");
         if (FLAGS_use_existing_db) {
           fprintf(stdout, "%-12s : skipped (--use_existing_db is true)\n",
                   name.ToString().c_str());
@@ -536,6 +559,7 @@ class Benchmark {
 
       if (method != nullptr) {
         RunBenchmark(num_threads, name, method);
+        fprintf(stderr, "after RunBenchmark\n");
       }
     }
   }
@@ -549,9 +573,13 @@ class Benchmark {
   };
 
   static void ThreadBody(void* v) {
+#ifdef JL_LIBCFS
+    fs_init_thread_local_mem();
+#endif
     ThreadArg* arg = reinterpret_cast<ThreadArg*>(v);
     SharedState* shared = arg->shared;
     ThreadState* thread = arg->thread;
+    pin_to_cpu_core(19 - thread->tid);
     {
       MutexLock l(&shared->mu);
       shared->num_initialized++;
@@ -607,6 +635,7 @@ class Benchmark {
     }
     arg[0].thread->stats.Report(name);
 
+    fprintf(stderr, "after report\n");
     for (int i = 0; i < n; i++) {
       delete arg[i].thread;
     }
@@ -696,6 +725,11 @@ class Benchmark {
       fprintf(stderr, "open error: %s\n", s.ToString().c_str());
       exit(1);
     }
+#ifdef JL_LIBCFS
+    // fprintf(stderr, "start dump\n");
+    // fs_start_dump_load_stats();
+#endif
+    fprintf(stdout, "DB::Open() DONE\n");
   }
 
   void OpenBench(ThreadState* thread) {
@@ -711,11 +745,19 @@ class Benchmark {
   void WriteRandom(ThreadState* thread) { DoWrite(thread, false); }
 
   void DoWrite(ThreadState* thread, bool seq) {
+    fprintf(stdout, "exec DoWrite\n");
     if (num_ != FLAGS_num) {
       char msg[100];
       snprintf(msg, sizeof(msg), "(%d ops)", num_);
       thread->stats.AddMessage(msg);
     }
+
+#ifdef JL_LIBCFS
+    if (g_num_workers > 1) {
+      // fprintf(stderr, ">>>>>>> assign to:%d\n", g_num_workers - 1);
+      // fs_admin_thread_reassign(0, g_num_workers - 1, FS_REASSIGN_FUTURE);
+    }
+#endif
 
     RandomGenerator gen;
     WriteBatch batch;
@@ -733,7 +775,7 @@ class Benchmark {
       }
       s = db_->Write(write_options_, &batch);
       if (!s.ok()) {
-        fprintf(stderr, "put error: %s\n", s.ToString().c_str());
+        fprintf(stderr, "put error: %s cur_i:%d\n", s.ToString().c_str(), i);
         exit(1);
       }
     }
@@ -745,6 +787,7 @@ class Benchmark {
     int i = 0;
     int64_t bytes = 0;
     for (iter->SeekToFirst(); i < reads_ && iter->Valid(); iter->Next()) {
+      // fprintf(stderr, "key:%s\n", iter->key().data());
       bytes += iter->key().size() + iter->value().size();
       thread->stats.FinishedSingleOp();
       ++i;
@@ -767,12 +810,23 @@ class Benchmark {
   }
 
   void ReadRandom(ThreadState* thread) {
+#ifdef JL_LIBCFS
+    if (g_num_workers > 1 && FLAGS_assign) {
+      // the main thraed will get threadFsTid=1
+      int cur_worker = (threadFsTid - 2 + g_num_workers) % g_num_workers;
+      fprintf(stdout, "cur_worker:%d\n", cur_worker);
+      // fs_admin_thread_reassign(0, cur_worker, FS_REASSIGN_FUTURE);
+    }
+#endif
     ReadOptions options;
     std::string value;
     int found = 0;
+
     for (int i = 0; i < reads_; i++) {
       char key[100];
-      const int k = thread->rand.Next() % FLAGS_num;
+      const int k = (thread->rand.Next() % FLAGS_num);
+      // const int k = i % FLAGS_num;
+      // fprintf(stdout, "i:%d key:%d\n", i, k);
       snprintf(key, sizeof(key), "%016d", k);
       if (db_->Get(options, key, &value).ok()) {
         found++;
@@ -934,6 +988,9 @@ int main(int argc, char** argv) {
     } else if (sscanf(argv[i], "--histogram=%d%c", &n, &junk) == 1 &&
                (n == 0 || n == 1)) {
       FLAGS_histogram = n;
+    } else if (sscanf(argv[i], "--assign=%d%c", &n, &junk) == 1 &&
+               (n == 0 || n == 1)) {
+      FLAGS_assign = n;
     } else if (sscanf(argv[i], "--use_existing_db=%d%c", &n, &junk) == 1 &&
                (n == 0 || n == 1)) {
       FLAGS_use_existing_db = n;
@@ -977,7 +1034,28 @@ int main(int argc, char** argv) {
     FLAGS_db = default_db_path.c_str();
   }
 
-  leveldb::Benchmark benchmark;
+  // leveldb::Benchmark benchmark;
+  leveldb::Benchmark* benchmark_ptr = new leveldb::Benchmark();
+  leveldb::Benchmark& benchmark = *benchmark_ptr;
   benchmark.Run();
+  fprintf(stderr, "DONE benchmark.Run()\n");
+  delete benchmark_ptr;
+  
+#ifdef JL_LIBCFS
+  fprintf(stderr, "start syncall\n");
+  fs_syncall();
+  fprintf(stderr, "stop_dump_stats\n");
+  if (g_num_workers == 1) {
+    // sleep(5);
+    // fs_stop_dump_load_stats();
+  }
+  // fs_stop_dump_load_stats();
+
+  fs_exit();
+  fprintf(stderr, "fs_exit DONE\n");
+  fs_cleanup();
+  fprintf(stderr, "fs_cleanup DONE\n");
+  // exit(0);
+#endif
   return 0;
 }

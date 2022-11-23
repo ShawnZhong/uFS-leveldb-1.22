@@ -34,6 +34,7 @@ class DBImpl : public DB {
   DBImpl& operator=(const DBImpl&) = delete;
 
   virtual ~DBImpl();
+  virtual void PartialDelete();
 
   // Implementations of the DB interface
   virtual Status Put(const WriteOptions&, const Slice& key, const Slice& value);

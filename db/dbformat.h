@@ -91,6 +91,9 @@ bool ParseInternalKey(const Slice& internal_key, ParsedInternalKey* result);
 
 // Returns the user key portion of an internal key.
 inline Slice ExtractUserKey(const Slice& internal_key) {
+  if (internal_key.size() < 8) {
+    fprintf(stderr, "internal key size:%lu\n", internal_key.size());
+  }
   assert(internal_key.size() >= 8);
   return Slice(internal_key.data(), internal_key.size() - 8);
 }

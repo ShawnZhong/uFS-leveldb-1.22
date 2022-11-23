@@ -8,6 +8,7 @@
 #include "leveldb/env.h"
 #include "leveldb/table.h"
 #include "util/coding.h"
+#include <stdexcept>
 
 namespace leveldb {
 
@@ -49,10 +50,18 @@ Status TableCache::FindTable(uint64_t file_number, uint64_t file_size,
     std::string fname = TableFileName(dbname_, file_number);
     RandomAccessFile* file = nullptr;
     Table* table = nullptr;
+#ifdef JL_LIBCFS
+    s = env_->NewFSPRandomAccessFile(fname, &file);
+#else
     s = env_->NewRandomAccessFile(fname, &file);
+#endif
     if (!s.ok()) {
       std::string old_fname = SSTTableFileName(dbname_, file_number);
+#ifdef JL_LIBCFS
+      if (env_->NewFSPRandomAccessFile(old_fname, &file).ok()) {
+#else
       if (env_->NewRandomAccessFile(old_fname, &file).ok()) {
+#endif
         s = Status::OK();
       }
     }
@@ -102,6 +111,8 @@ Status TableCache::Get(const ReadOptions& options, uint64_t file_number,
                        void (*handle_result)(void*, const Slice&,
                                              const Slice&)) {
   Cache::Handle* handle = nullptr;
+  // fprintf(stderr, "TableCache::Get() filenumber:%lu file_size:%lu\n",
+  // file_number, file_size);
   Status s = FindTable(file_number, file_size, &handle);
   if (s.ok()) {
     Table* t = reinterpret_cast<TableAndFile*>(cache_->Value(handle))->table;

@@ -59,6 +59,7 @@ class LEVELDB_EXPORT DB {
   DB& operator=(const DB&) = delete;
 
   virtual ~DB();
+  virtual void PartialDelete();
 
   // Set the database entry for "key" to "value".  Returns OK on success,
   // and a non-OK status on error.

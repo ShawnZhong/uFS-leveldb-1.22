@@ -320,6 +320,7 @@ class Repairer {
       s = builder->Finish();
       if (s.ok()) {
         t.meta.file_size = builder->FileSize();
+        fprintf(stderr, "t.meta.file_size(%lu) set to:%lu\n", t.meta.number, t.meta.file_size);
       }
     }
     delete builder;

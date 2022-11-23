@@ -37,6 +37,9 @@ class Block {
   size_t size_;
   uint32_t restart_offset_;  // Offset in data_ of restart array
   bool owned_;               // Block owns data_[]
+#ifdef JL_LIBCFS
+  int allocatorFsTid;
+#endif
 };
 
 }  // namespace leveldb

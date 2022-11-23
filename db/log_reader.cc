@@ -20,15 +20,30 @@ Reader::Reader(SequentialFile* file, Reporter* reporter, bool checksum,
     : file_(file),
       reporter_(reporter),
       checksum_(checksum),
-      backing_store_(new char[kBlockSize]),
+#ifdef JL_LIBCFS
+      backing_store_((char*)fs_malloc(kBlockSize)),
+#else
+      backing_store_((char*)malloc(kBlockSize)),
+#endif
+      // backing_store_(new char[kBlockSize]),
       buffer_(),
       eof_(false),
       last_record_offset_(0),
       end_of_buffer_offset_(0),
       initial_offset_(initial_offset),
-      resyncing_(initial_offset > 0) {}
+      resyncing_(initial_offset > 0) {
+}
 
-Reader::~Reader() { delete[] backing_store_; }
+Reader::~Reader() {
+  if (backing_store_ != nullptr) {
+#ifdef JL_LIBCFS
+    fs_free(backing_store_);
+#else
+    free(backing_store_);
+#endif
+  }
+  // delete[] backing_store_;
+}
 
 bool Reader::SkipToInitialBlock() {
   const size_t offset_in_block = initial_offset_ % kBlockSize;

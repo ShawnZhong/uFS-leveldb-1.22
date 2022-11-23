@@ -14,6 +14,11 @@
 #include "util/coding.h"
 #include "util/logging.h"
 
+#ifdef JL_LIBCFS
+#include "fsapi.h"
+extern thread_local int threadFsTid;
+#endif
+
 namespace leveldb {
 
 inline uint32_t Block::NumRestarts() const {
@@ -24,7 +29,11 @@ inline uint32_t Block::NumRestarts() const {
 Block::Block(const BlockContents& contents)
     : data_(contents.data.data()),
       size_(contents.data.size()),
-      owned_(contents.heap_allocated) {
+      owned_(contents.heap_allocated)
+#ifdef JL_LIBCFS
+      , allocatorFsTid(contents.allocatorFsTid)
+#endif
+{
   if (size_ < sizeof(uint32_t)) {
     size_ = 0;  // Error marker
   } else {
@@ -40,7 +49,11 @@ Block::Block(const BlockContents& contents)
 
 Block::~Block() {
   if (owned_) {
+#ifdef JL_LIBCFS
+    fs_free_pad(const_cast<char*>(data_), allocatorFsTid);
+#else
     delete[] data_;
+#endif
   }
 }
 

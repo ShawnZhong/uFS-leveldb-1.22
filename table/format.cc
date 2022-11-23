@@ -10,6 +10,12 @@
 #include "util/coding.h"
 #include "util/crc32c.h"
 
+#include <stdexcept>
+
+#ifdef JL_LIBCFS
+extern thread_local int threadFsTid;
+#endif
+
 namespace leveldb {
 
 void BlockHandle::EncodeTo(std::string* dst) const {
@@ -61,6 +67,14 @@ Status Footer::DecodeFrom(Slice* input) {
   return result;
 }
 
+void DestructBlockBuf(char* buf) {
+#ifdef JL_LIBCFS
+  fs_free_pad(buf);
+#else
+  delete[] buf;
+#endif  // JL_LIBCFS
+}
+
 Status ReadBlock(RandomAccessFile* file, const ReadOptions& options,
                  const BlockHandle& handle, BlockContents* result) {
   result->data = Slice();
@@ -70,15 +84,29 @@ Status ReadBlock(RandomAccessFile* file, const ReadOptions& options,
   // Read the block contents as well as the type/crc footer.
   // See table_builder.cc for the code that built this structure.
   size_t n = static_cast<size_t>(handle.size());
+  // char* buf = new char[n + kBlockTrailerSize];
+#ifdef JL_LIBCFS
+  // fprintf(stderr, "alloc for readBlock size:%lu\n", n + kBlockTrailerSize);
+  char* buf = (char*)fs_malloc_pad(n + kBlockTrailerSize);
+  if (buf == nullptr) {
+    throw std::runtime_error(std::to_string(threadFsTid) +
+                             " ReadBlock cannot alloc size:" +
+                             std::to_string(n + kBlockTrailerSize));
+  }
+#else  // JL_LIBCFS
   char* buf = new char[n + kBlockTrailerSize];
+#endif
+
   Slice contents;
   Status s = file->Read(handle.offset(), n + kBlockTrailerSize, &contents, buf);
   if (!s.ok()) {
-    delete[] buf;
+    DestructBlockBuf(buf);
+    // delete[] buf;
     return s;
   }
   if (contents.size() != n + kBlockTrailerSize) {
-    delete[] buf;
+    DestructBlockBuf(buf);
+    // delete[] buf;
     return Status::Corruption("truncated block read");
   }
 
@@ -100,7 +128,8 @@ Status ReadBlock(RandomAccessFile* file, const ReadOptions& options,
         // File implementation gave us pointer to some other data.
         // Use it directly under the assumption that it will be live
         // while the file is open.
-        delete[] buf;
+        DestructBlockBuf(buf);
+        // delete[] buf;
         result->data = Slice(data, n);
         result->heap_allocated = false;
         result->cachable = false;  // Do not double-cache
@@ -108,6 +137,9 @@ Status ReadBlock(RandomAccessFile* file, const ReadOptions& options,
         result->data = Slice(buf, n);
         result->heap_allocated = true;
         result->cachable = true;
+#ifdef JL_LIBCFS
+        result->allocatorFsTid = threadFsTid;
+#endif
       }
 
       // Ok
@@ -115,23 +147,27 @@ Status ReadBlock(RandomAccessFile* file, const ReadOptions& options,
     case kSnappyCompression: {
       size_t ulength = 0;
       if (!port::Snappy_GetUncompressedLength(data, n, &ulength)) {
-        delete[] buf;
+        DestructBlockBuf(buf);
+        // delete[] buf;
         return Status::Corruption("corrupted compressed block contents");
       }
       char* ubuf = new char[ulength];
       if (!port::Snappy_Uncompress(data, n, ubuf)) {
-        delete[] buf;
+        // delete[] buf;
+        DestructBlockBuf(buf);
         delete[] ubuf;
         return Status::Corruption("corrupted compressed block contents");
       }
-      delete[] buf;
+      // delete[] buf;
+      DestructBlockBuf(buf);
       result->data = Slice(ubuf, ulength);
       result->heap_allocated = true;
       result->cachable = true;
       break;
     }
     default:
-      delete[] buf;
+      // delete[] buf;
+      DestructBlockBuf(buf);
       return Status::Corruption("bad block type");
   }
 

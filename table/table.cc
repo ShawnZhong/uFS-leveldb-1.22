@@ -14,6 +14,7 @@
 #include "table/format.h"
 #include "table/two_level_iterator.h"
 #include "util/coding.h"
+#include <stdexcept>
 
 namespace leveldb {
 
@@ -35,6 +36,14 @@ struct Table::Rep {
   Block* index_block;
 };
 
+void DestructFooterSpace(char* buf) {
+#ifdef JL_LIBCFS
+  fs_free_pad(buf);
+#else
+  free(buf);
+#endif  // JL_LIBCFS_CPC
+}
+
 Status Table::Open(const Options& options, RandomAccessFile* file,
                    uint64_t size, Table** table) {
   *table = nullptr;
@@ -42,15 +51,26 @@ Status Table::Open(const Options& options, RandomAccessFile* file,
     return Status::Corruption("file is too short to be an sstable");
   }
 
-  char footer_space[Footer::kEncodedLength];
+#ifdef JL_LIBCFS
+  char* footer_space = (char*)fs_malloc_pad(Footer::kEncodedLength);
+#else
+  char* footer_space = (char*)malloc(Footer::kEncodedLength);
+#endif
+  // char footer_space[Footer::kEncodedLength];
   Slice footer_input;
   Status s = file->Read(size - Footer::kEncodedLength, Footer::kEncodedLength,
                         &footer_input, footer_space);
-  if (!s.ok()) return s;
+  if (!s.ok()) {
+    DestructFooterSpace(footer_space);
+    return s;
+  }
 
   Footer footer;
   s = footer.DecodeFrom(&footer_input);
-  if (!s.ok()) return s;
+  if (!s.ok()) {
+    DestructFooterSpace(footer_space);
+    return s;
+  }
 
   // Read the index block
   BlockContents index_block_contents;
@@ -77,7 +97,7 @@ Status Table::Open(const Options& options, RandomAccessFile* file,
     *table = new Table(rep);
     (*table)->ReadMeta(footer);
   }
-
+  DestructFooterSpace(footer_space);
   return s;
 }
 

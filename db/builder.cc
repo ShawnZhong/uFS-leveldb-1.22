@@ -23,7 +23,12 @@ Status BuildTable(const std::string& dbname, Env* env, const Options& options,
   std::string fname = TableFileName(dbname, meta->number);
   if (iter->Valid()) {
     WritableFile* file;
+#ifdef JL_LIBCFS
+    s = env->NewFSPWritableFile(fname, &file);
+#else
     s = env->NewWritableFile(fname, &file);
+#endif
+
     if (!s.ok()) {
       return s;
     }

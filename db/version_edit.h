@@ -8,6 +8,7 @@
 #include <set>
 #include <utility>
 #include <vector>
+#include <stdexcept>
 
 #include "db/dbformat.h"
 

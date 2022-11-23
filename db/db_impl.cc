@@ -36,6 +36,9 @@
 #include "util/logging.h"
 #include "util/mutexlock.h"
 
+
+extern int g_appid;
+
 namespace leveldb {
 
 const int kNumNonTableCacheFiles = 10;
@@ -159,6 +162,12 @@ DBImpl::~DBImpl() {
   }
   mutex_.Unlock();
 
+#if defined(JL_LIBCFS)
+  if (g_appid == 1) {
+    fs_stop_dump_load_stats();
+  }
+#endif
+
   if (db_lock_ != nullptr) {
     env_->UnlockFile(db_lock_);
   }
@@ -167,6 +176,7 @@ DBImpl::~DBImpl() {
   if (mem_ != nullptr) mem_->Unref();
   if (imm_ != nullptr) imm_->Unref();
   delete tmp_batch_;
+  if (logfile_) logfile_->Sync();
   delete log_;
   delete logfile_;
   delete table_cache_;
@@ -177,6 +187,25 @@ DBImpl::~DBImpl() {
   if (owns_cache_) {
     delete options_.block_cache;
   }
+}
+
+void DBImpl::PartialDelete() {
+  mutex_.Lock();
+  shutting_down_.store(true, std::memory_order_release);
+  while (background_compaction_scheduled_) {
+    background_work_finished_signal_.Wait();
+  }
+  mutex_.Unlock();
+  if (db_lock_ != nullptr) {
+    env_->UnlockFile(db_lock_);
+  }  // ok
+  delete versions_;
+  // if (mem_ != nullptr) mem_->Unref();
+  // if (imm_ != nullptr) imm_->Unref();
+  // delete tmp_batch_;
+  // delete log_;
+  // delete logfile_;
+  // delete table_cache_;
 }
 
 Status DBImpl::NewDB() {
@@ -287,6 +316,7 @@ Status DBImpl::Recover(VersionEdit* edit, bool* save_manifest) {
   assert(db_lock_ == nullptr);
   Status s = env_->LockFile(LockFileName(dbname_), &db_lock_);
   if (!s.ok()) {
+    fprintf(stderr, "Recover: cannot lock()\n");
     return s;
   }
 
@@ -294,6 +324,7 @@ Status DBImpl::Recover(VersionEdit* edit, bool* save_manifest) {
     if (options_.create_if_missing) {
       s = NewDB();
       if (!s.ok()) {
+        fprintf(stderr, "Recover: cannot NewDB()\n");
         return s;
       }
     } else {
@@ -309,6 +340,7 @@ Status DBImpl::Recover(VersionEdit* edit, bool* save_manifest) {
 
   s = versions_->Recover(save_manifest);
   if (!s.ok()) {
+    fprintf(stderr, "Recover: cannot recover versions\n");
     return s;
   }
   SequenceNumber max_sequence(0);
@@ -461,7 +493,11 @@ Status DBImpl::RecoverLogFile(uint64_t log_number, bool last_log,
     assert(mem_ == nullptr);
     uint64_t lfile_size;
     if (env_->GetFileSize(fname, &lfile_size).ok() &&
+#ifdef JL_LIBCFS
+        env_->NewFSPAppendableFile(fname, &logfile_).ok()) {
+#else
         env_->NewAppendableFile(fname, &logfile_).ok()) {
+#endif
       Log(options_.info_log, "Reusing old log %s \n", fname.c_str());
       log_ = new log::Writer(logfile_, lfile_size);
       logfile_number_ = log_number;
@@ -642,6 +678,11 @@ void DBImpl::RecordBackgroundError(const Status& s) {
   if (bg_error_.ok()) {
     bg_error_ = s;
     background_work_finished_signal_.SignalAll();
+  }
+  if (!bg_error_.ok()) {
+    printf("bg error %s\n", bg_error_.ToString().c_str());
+    throw std::runtime_error("background error");
+    fprintf(stderr, "++++++++++++++ RecordBackgroundError\n");
   }
 }
 
@@ -1001,9 +1042,11 @@ Status DBImpl::DoCompactionWork(CompactionState* compact) {
   if (status.ok() && shutting_down_.load(std::memory_order_acquire)) {
     status = Status::IOError("Deleting DB during compaction");
   }
+
   if (status.ok() && compact->builder != nullptr) {
     status = FinishCompactionOutputFile(compact, input);
   }
+
   if (status.ok()) {
     status = input->status();
   }
@@ -1231,6 +1274,7 @@ Status DBImpl::Write(const WriteOptions& options, WriteBatch* updates) {
         RecordBackgroundError(status);
       }
     }
+
     if (updates == tmp_batch_) tmp_batch_->Clear();
 
     versions_->SetLastSequence(last_sequence);
@@ -1347,7 +1391,11 @@ Status DBImpl::MakeRoomForWrite(bool force) {
       assert(versions_->PrevLogNumber() == 0);
       uint64_t new_log_number = versions_->NewFileNumber();
       WritableFile* lfile = nullptr;
+#ifdef JL_LIBCFS
+      s = env_->NewFSPWritableFile(LogFileName(dbname_, new_log_number), &lfile);
+#else
       s = env_->NewWritableFile(LogFileName(dbname_, new_log_number), &lfile);
+#endif
       if (!s.ok()) {
         // Avoid chewing through file number space in a tight loop.
         versions_->ReuseFileNumber(new_log_number);
@@ -1470,6 +1518,7 @@ Status DB::Delete(const WriteOptions& opt, const Slice& key) {
 }
 
 DB::~DB() {}
+void DB::PartialDelete() {}
 
 Status DB::Open(const Options& options, const std::string& dbname, DB** dbptr) {
   *dbptr = nullptr;
@@ -1480,12 +1529,18 @@ Status DB::Open(const Options& options, const std::string& dbname, DB** dbptr) {
   // Recover handles create_if_missing, error_if_exists
   bool save_manifest = false;
   Status s = impl->Recover(&edit, &save_manifest);
+  fprintf(stdout, "s.ok? 0:%d\n", s.ok());
   if (s.ok() && impl->mem_ == nullptr) {
     // Create new log and a corresponding memtable.
     uint64_t new_log_number = impl->versions_->NewFileNumber();
     WritableFile* lfile;
+#ifdef JL_LIBCFS
+    s = options.env->NewFSPWritableFile(LogFileName(dbname, new_log_number),
+                                     &lfile);
+#else
     s = options.env->NewWritableFile(LogFileName(dbname, new_log_number),
                                      &lfile);
+#endif
     if (s.ok()) {
       edit.SetLogNumber(new_log_number);
       impl->logfile_ = lfile;
@@ -1495,16 +1550,20 @@ Status DB::Open(const Options& options, const std::string& dbname, DB** dbptr) {
       impl->mem_->Ref();
     }
   }
+  fprintf(stdout, "s.ok? 1:%d\n", s.ok());
   if (s.ok() && save_manifest) {
     edit.SetPrevLogNumber(0);  // No older logs needed after recovery.
     edit.SetLogNumber(impl->logfile_number_);
     s = impl->versions_->LogAndApply(&edit, &impl->mutex_);
   }
+  fprintf(stdout, "s.ok? 2:%d\n", s.ok());
   if (s.ok()) {
     impl->DeleteObsoleteFiles();
     impl->MaybeScheduleCompaction();
   }
+  fprintf(stdout, "s.ok? 3:%d\n", s.ok());
   impl->mutex_.Unlock();
+  fprintf(stdout, "s.ok? 4:%d\n", s.ok());
   if (s.ok()) {
     assert(impl->mem_ != nullptr);
     *dbptr = impl;
@@ -1517,6 +1576,7 @@ Status DB::Open(const Options& options, const std::string& dbname, DB** dbptr) {
 Snapshot::~Snapshot() {}
 
 Status DestroyDB(const std::string& dbname, const Options& options) {
+  fprintf(stdout, "======= DestroyDB()\n");
   Env* env = options.env;
   std::vector<std::string> filenames;
   Status result = env->GetChildren(dbname, &filenames);

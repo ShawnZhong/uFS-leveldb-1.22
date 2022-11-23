@@ -70,7 +70,12 @@ Status ReadFileToString(Env* env, const std::string& fname, std::string* data) {
     return s;
   }
   static const int kBufferSize = 8192;
-  char* space = new char[kBufferSize];
+  // char* space = new char[kBufferSize];
+#ifdef JL_LIBCFS
+  char* space = (char*)fs_malloc(kBufferSize);
+#else
+  char* space = (char*)malloc(kBufferSize);
+#endif
   while (true) {
     Slice fragment;
     s = file->Read(kBufferSize, &fragment, space);
@@ -82,7 +87,13 @@ Status ReadFileToString(Env* env, const std::string& fname, std::string* data) {
       break;
     }
   }
-  delete[] space;
+#ifdef JL_LIBCFS
+  fprintf(stderr, "ReadFileToString\n");
+  fs_free(space);
+#else
+  free(space);
+#endif
+  // delete[] space;
   delete file;
   return s;
 }
