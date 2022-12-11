@@ -1304,12 +1304,19 @@ class PosixEnv : public Env {
 
   Status CreateDir(const std::string& dirname) override {
 #ifdef JL_LIBCFS
+    struct stat statbuf;
+    if (fs_stat(dirname.c_str(), &statbuf) == 0) {
+        return Status::OK();
+    }
+
     if (fs_mkdir(dirname.c_str(), 0755) != 0) {
+        return PosixError(dirname, errno);
+    }
 #else
     if (::mkdir(dirname.c_str(), 0755) != 0) {
-#endif
       return PosixError(dirname, errno);
     }
+#endif
     return Status::OK();
   }
 
