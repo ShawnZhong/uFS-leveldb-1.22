@@ -1178,9 +1178,9 @@ Status DBImpl::Get(const ReadOptions& options, const Slice& key,
     mutex_.Lock();
   }
 
-  if (have_stat_update && current->UpdateStats(stats)) {
-    MaybeScheduleCompaction();
-  }
+//  if (have_stat_update && current->UpdateStats(stats)) {
+//    MaybeScheduleCompaction();
+//  }
   mem->Unref();
   if (imm != nullptr) imm->Unref();
   current->Unref();
@@ -1529,7 +1529,6 @@ Status DB::Open(const Options& options, const std::string& dbname, DB** dbptr) {
   // Recover handles create_if_missing, error_if_exists
   bool save_manifest = false;
   Status s = impl->Recover(&edit, &save_manifest);
-  fprintf(stdout, "s.ok? 0:%d\n", s.ok());
   if (s.ok() && impl->mem_ == nullptr) {
     // Create new log and a corresponding memtable.
     uint64_t new_log_number = impl->versions_->NewFileNumber();
@@ -1550,20 +1549,16 @@ Status DB::Open(const Options& options, const std::string& dbname, DB** dbptr) {
       impl->mem_->Ref();
     }
   }
-  fprintf(stdout, "s.ok? 1:%d\n", s.ok());
   if (s.ok() && save_manifest) {
     edit.SetPrevLogNumber(0);  // No older logs needed after recovery.
     edit.SetLogNumber(impl->logfile_number_);
     s = impl->versions_->LogAndApply(&edit, &impl->mutex_);
   }
-  fprintf(stdout, "s.ok? 2:%d\n", s.ok());
   if (s.ok()) {
     impl->DeleteObsoleteFiles();
     impl->MaybeScheduleCompaction();
   }
-  fprintf(stdout, "s.ok? 3:%d\n", s.ok());
   impl->mutex_.Unlock();
-  fprintf(stdout, "s.ok? 4:%d\n", s.ok());
   if (s.ok()) {
     assert(impl->mem_ != nullptr);
     *dbptr = impl;
