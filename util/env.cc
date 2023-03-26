@@ -88,7 +88,6 @@ Status ReadFileToString(Env* env, const std::string& fname, std::string* data) {
     }
   }
 #ifdef JL_LIBCFS
-  fprintf(stderr, "ReadFileToString\n");
   fs_free(space);
 #else
   free(space);
