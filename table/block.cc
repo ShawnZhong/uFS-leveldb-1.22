@@ -50,7 +50,7 @@ Block::Block(const BlockContents& contents)
 Block::~Block() {
   if (owned_) {
 #ifdef JL_LIBCFS
-    fs_free_pad(const_cast<char*>(data_), allocatorFsTid);
+    fs_free(const_cast<char*>(data_), allocatorFsTid);
 #else
     delete[] data_;
 #endif

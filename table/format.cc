@@ -69,7 +69,7 @@ Status Footer::DecodeFrom(Slice* input) {
 
 void DestructBlockBuf(char* buf) {
 #ifdef JL_LIBCFS
-  fs_free_pad(buf);
+  fs_free(buf);
 #else
   delete[] buf;
 #endif  // JL_LIBCFS
@@ -87,7 +87,7 @@ Status ReadBlock(RandomAccessFile* file, const ReadOptions& options,
   // char* buf = new char[n + kBlockTrailerSize];
 #ifdef JL_LIBCFS
   // fprintf(stderr, "alloc for readBlock size:%lu\n", n + kBlockTrailerSize);
-  char* buf = (char*)fs_malloc_pad(n + kBlockTrailerSize);
+  char* buf = (char*)fs_malloc(n + kBlockTrailerSize);
   if (buf == nullptr) {
     throw std::runtime_error(std::to_string(threadFsTid) +
                              " ReadBlock cannot alloc size:" +

@@ -38,7 +38,7 @@ struct Table::Rep {
 
 void DestructFooterSpace(char* buf) {
 #ifdef JL_LIBCFS
-  fs_free_pad(buf);
+  fs_free(buf);
 #else
   free(buf);
 #endif  // JL_LIBCFS_CPC
@@ -52,7 +52,7 @@ Status Table::Open(const Options& options, RandomAccessFile* file,
   }
 
 #ifdef JL_LIBCFS
-  char* footer_space = (char*)fs_malloc_pad(Footer::kEncodedLength);
+  char* footer_space = (char*)fs_malloc(Footer::kEncodedLength);
 #else
   char* footer_space = (char*)malloc(Footer::kEncodedLength);
 #endif

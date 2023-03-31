@@ -381,7 +381,7 @@ class FSPRandomAccessFile final : public RandomAccessFile {
     if (has_permanent_fd_) {
       assert(fd_ != -1);
 #ifdef JL_LIBCFS
-      fs_close_ldb(fd_);
+      fs_close(fd_);
 #else
       ::close(fd_);
 #endif
@@ -414,7 +414,7 @@ class FSPRandomAccessFile final : public RandomAccessFile {
     }
 
     ssize_t read_size =
-        fs_allocated_pread_ldb(fd, scratch, n, static_cast<off_t>(offset));
+        fs_allocated_pread(fd, scratch, n, static_cast<off_t>(offset));
 
     // dump_pread_result(scratch, filename_.c_str(), fd, offset, n, read_size);
     // fprintf(stdout, "fs_pread(fd:%d n=%ld offset:%lu) ret:%ld\n", fd, n,
@@ -836,7 +836,7 @@ class FSPWritableFile final : public WritableFile {
   Status Close() override {
     Status status = FlushBuffer();
 #ifdef JL_LIBCFS
-    const int close_result = fs_close_ldb(fd_);
+    const int close_result = fs_close(fd_);
 #else
     const int close_result = ::close(fd_);
 #endif
@@ -900,7 +900,7 @@ class FSPWritableFile final : public WritableFile {
 #ifdef JL_LIBCFS
       // ssize_t write_result = fs_write(fd_, data, size);
       char* data_ptr = const_cast<char*>(data);
-      ssize_t write_result = fs_allocated_write_ldb(fd_, data_ptr, size);
+      ssize_t write_result = fs_allocated_write(fd_, data_ptr, size);
       // if (write_result != size) {
       //   fprintf(stderr, ">>>>>>>ERROR write size not match\n");
       // }
@@ -976,13 +976,13 @@ class FSPWritableFile final : public WritableFile {
 
 #if HAVE_FDATASYNC
 #ifdef JL_LIBCFS
-    bool sync_success = fs_wsync(fd) == 0;
+    bool sync_success = fs_fsync(fd) == 0;
 #else
     bool sync_success = ::fdatasync(fd) == 0;
 #endif  // JL_LIBCFS
 #else
 #ifdef JL_LIBCFS
-    bool sync_success = fs_wsync(fd) == 0;
+    bool sync_success = fs_fsync(fd) == 0;
 #else
     bool sync_success = ::fsync(fd) == 0;
 #endif  // JL_LIBCFS
@@ -1174,7 +1174,7 @@ class PosixEnv : public Env {
                              RandomAccessFile** result) override {
     *result = nullptr;
 #ifdef JL_LIBCFS
-    int fd = fs_open_ldb2(filename.c_str(), O_RDONLY);
+    int fd = fs_open2(filename.c_str(), O_RDONLY);
 #else
     int fd = ::open(filename.c_str(), O_RDONLY);
 #endif
@@ -1209,7 +1209,7 @@ class PosixEnv : public Env {
   Status NewFSPWritableFile(const std::string& filename,
                          WritableFile** result) override {
 #ifdef JL_LIBCFS
-    int fd = fs_open_ldb(filename.c_str(), O_TRUNC | O_WRONLY | O_CREAT, 0644);
+    int fd = fs_open(filename.c_str(), O_TRUNC | O_WRONLY | O_CREAT, 0644);
 #else
     int fd = ::open(filename.c_str(), O_TRUNC | O_WRONLY | O_CREAT, 0644);
 #endif
@@ -1241,7 +1241,7 @@ class PosixEnv : public Env {
   Status NewFSPAppendableFile(const std::string& filename,
                            WritableFile** result) override {
 #ifdef JL_LIBCFS
-    int fd = fs_open_ldb(filename.c_str(), O_APPEND | O_WRONLY | O_CREAT, 0644);
+    int fd = fs_open(filename.c_str(), O_APPEND | O_WRONLY | O_CREAT, 0644);
 #else
     int fd = ::open(filename.c_str(), O_APPEND | O_WRONLY | O_CREAT, 0644);
 #endif
